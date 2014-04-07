@@ -1,0 +1,273 @@
+<?php
+
+/**
+ * Path to zip directory
+ */
+define('ZIP_PATH', variable_get('file_public_path', conf_path() . '/files') . '/zip');
+
+/**
+ * Implementation of hook_menu()
+ *
+ * @return array
+ */
+function zip_menu() {
+  $menu = array();
+
+  $menu['admin/config/zip'] = array(
+    'title' => t('Zip settings'),
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('zip_admin_form'),
+    'access arguments' => array('administer site configuration'),
+    'type' => MENU_NORMAL_ITEM,
+  );
+  $menu['zip/%'] = array(
+    'page callback' => 'zip_download',
+    'page arguments' => array(1),
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+  );
+
+  return $menu;
+}
+
+/**
+ * Zip module configuration form
+ *
+ * @return mixed
+ */
+function zip_admin_form() {
+  $form = array();
+
+  $form['fieldset'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Zip settings'),
+    '#description' => t('Remove zip files'),
+  );
+  $form['fieldset']['submit']  = array(
+    '#type' => 'submit',
+    '#value' => t('Remove')
+  );
+
+  return $form;
+}
+
+/**
+ * Zip module configuration form - Submission
+ *
+ * @param $form
+ * @param $form_state
+ */
+function zip_admin_form_submit($form , &$form_state) {
+  $uri_dir = 'public://zip';
+  $query = db_select('file_managed', 'f')
+    ->fields('f', array('fid','uri'))
+    ->condition('f.uri',  $uri_dir . '%', 'LIKE')
+    ->execute()
+    ->fetchAllKeyed();
+  foreach ($query as $key => $value) {
+    $file = new StdClass();
+    $file->fid = $key;
+    $file->uri = $value;
+    file_delete($file,true);
+  }
+  drupal_set_message(t('Zip files were removed'));
+}
+
+/**
+ * @param $hash
+ */
+function zip_download($hash) {
+  // todo make the files be downloaded through this path
+  exit;
+}
+
+/**
+ * Implementation of hook_theme()
+ *
+ * @return array
+ */
+function zip_theme() {
+  $theme = array();
+
+  $theme['zip'] = array(
+    'variables' => array(
+      'hash' => NULL,
+    ),
+    'template' => 'zip',
+    'preprocess functions' => array('zip_theme_zip_preprocess'),
+  );
+
+  return $theme;
+}
+
+/**
+ * Preprocess for "zip" theme
+ *
+ * @param $vars
+ */
+function zip_theme_zip_preprocess(&$vars) {
+  $vars['path'] = zip_filepath($vars['hash']);
+}
+
+/**
+ * @param $hash
+ * @return bool|string
+ */
+function zip_filepath($hash) {
+  $path = ZIP_PATH . '/' . $hash . '.zip';
+  if (file_exists($path)) {
+    return $path;
+  } else {
+    return false;
+  }
+}
+
+/**
+ * Implementation of hook_field_formatter_info()
+ *
+ * @return array
+ */
+function zip_field_formatter_info() {
+  return array(
+    'zip_formatter' => array(
+      'label' => t('Zip'),
+      'field types' => array('file'),
+    ),
+  );
+}
+
+/**
+ * Implementation of hook_field_formatter_view()
+ *
+ * @param $entity_type
+ * @param $entity
+ * @param $field
+ * @param $instance
+ * @param $langcode
+ * @param $items
+ * @param $display
+ * @return array
+ */
+function zip_field_formatter_view($entity_type, $entity, $field, $instance, $langcode, $items, $display) {
+  $element = array();
+
+  if (!empty($items)) {
+    $hash = zip_hash($entity->nid, $instance['field_name']);
+    $zpath = ZIP_PATH . '/' . $hash . '.zip';
+    if (!file_exists($zpath)) {
+      zip_build_archive($items, $hash.'.zip', ZIP_PATH);
+    }
+    $element[0]['#markup'] = theme('zip', array('hash' => $hash));
+    $rows = array();
+    foreach ($items as $delta => $item) {
+      $rows[] = array($item['filename']);
+    }
+    $element[0]['#rows'] = $rows;
+  }
+
+  return $element;
+}
+
+/**
+ * Generate the hash
+ *
+ * @param $nid
+ * @param $field_name
+ * @return string
+ */
+function zip_hash($nid, $field_name) {
+  $query = db_select('zip_hash', 'z')
+    ->fields('z', array('hash'))
+    ->condition('z.nid', $nid)
+    ->condition('z.field', $field_name)
+    ->execute()
+    ->fetchAssoc();
+  if	($query === false) {
+    $hash = md5($field_name . ':' .  $nid);
+    $record = array (
+      'hash'  => $hash,
+      'nid'   => $nid,
+      'field' => $field_name,
+    );
+    drupal_write_record('zip_hash', $record);
+  } else {
+    $hash = $query['hash'];
+  }
+
+  return $hash;
+}
+
+/**
+ * Create archive
+ *
+ * @param $files
+ * @param $zip_name
+ * @param $path
+ * @return bool
+ */
+function zip_build_archive($files, $zip_name, $path) {
+	if(!extension_loaded('zip')){
+		drupal_set_message(t('ZIP Extension is not available'), 'error');
+		return false; 
+	}
+	if (!file_prepare_directory($path, FILE_MODIFY_PERMISSIONS)) {
+		drupal_set_message(t('Directory for zip files is not writable'), 'error');
+		return false;
+	}
+	//
+	$zip = new ZipArchive();
+	$filename = $path . '/' . $zip_name;	 
+  //
+	if ($zip->open($filename, ZIPARCHIVE::OVERWRITE) !== TRUE) {
+    drupal_set_message(t('ZIP file was not created'), 'error');
+		return false; 
+	}
+	//
+	foreach ($files as $value) {
+		$file = file_load($value['fid']);
+		$zip->addFile(drupal_realpath($file->uri), $file->filename);
+	}
+	$zip->close();
+	// write search for file in DB
+	$uri = 'public://zip/'.$zip_name;
+	$query = db_select('file_managed', 'f')
+		->fields('f', array('fid'))
+		->condition('f.uri', $uri)
+		->execute()
+		->fetchAssoc();
+	if ($query) {
+		$file = file_load($query['fid']);
+		file_delete($file, true);
+	}
+	//
+	if (file_exists($filename)){
+		global $user;
+				
+		$file = new stdClass();
+		$file->uid = $user->uid;
+		$file->filename = $zip_name;
+		$file->uri = $uri;
+		$file->filemime = 'arc/zip';
+		file_save($file);
+		
+		return true;
+	}
+	return false;
+}
+
+/**
+ * Implementation of hook_node_update()
+ *
+ * @param $node
+ */
+function zip_node_update($node) {
+	$instances = field_info_instances('node', $node->type);
+	foreach ($instances as $field_name => $value) {
+		if ($value['display']['default']['type'] === 'zip_formatter') {
+			$fields = $node->$field_name;
+			$fields = $fields['und'];
+		  $hash = zip_hash($node->nid, $field_name);
+			zip_build_archive($fields, $hash.'.zip', ZIP_PATH);
+		}
+	}
+}

@@ -1,0 +1,46 @@
+<?php
+
+/**
+ *
+ */
+function zip_install()
+{
+  $path = ZIP_PATH;
+  file_prepare_directory($path, FILE_CREATE_DIRECTORY);
+}
+
+/**
+ * Implementation of hook_schema()
+ *
+ * @return mixed
+ */
+function zip_schema()
+{
+  $schema['zip_hash'] = array(
+    'description' => 'Table for zip module',
+    'fields' => array(
+      'hash' => array(
+        'type' => 'varchar',
+        'length' => 32,
+        'not null' => true,
+      ),
+      'nid' => array(
+        'type' => 'int',
+        'size' => 'normal',
+        'unsigned' => true,
+        'not null' => true,
+      ),
+      'field' => array(
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => true,
+      ),
+    ),
+    'unique key' => array(
+      'hash' => array('hash'),
+      'nid_field' => array('nid', 'field'),
+    ),
+  );
+
+  return $schema;
+}

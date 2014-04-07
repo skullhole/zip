@@ -1,0 +1,5 @@
+name = Zip
+description = "Zip Archive widget for File Field"
+package = Custom
+core = 7.x
+version = "7.x-1.0"
